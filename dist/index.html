@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f7f8fc">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="词屿">
+<meta name="description" content="词屿 CET-4 刷词工作台，离线练习四级核心词汇。">
+<title>词屿 · CET-4 刷词工作台</title>
+<link rel="icon" href="assets/icon-192.png"><link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="manifest" href="manifest.json"><link rel="stylesheet" href="tailwind.css"><link rel="stylesheet" href="style.css">
+<script defer src="words.js"></script><script defer src="audio-index.js"></script><script defer src="engine.js"></script><script defer src="app.js"></script>
+</head>
+<body>
+<header class="app-header">
+  <div class="shell flex items-center justify-between header-inner">
+    <div class="flex items-center brand-line"><span class="brand-logo" data-icon="brand"></span><span class="brand">词屿</span><span class="header-divider"></span><span class="product">CET-4 刷词工作台</span></div>
+    <div class="flex items-center header-actions"><span class="connection"><i></i><span id="offline">本地模式</span></span><button type="button" id="settings" class="settings-button flex items-center" aria-label="设置"><i data-icon="settings"></i><span>设置</span></button></div>
+  </div>
+</header>
+<main class="shell">
+  <section class="page-intro flex items-end justify-between">
+    <div><div class="eyebrow"><i></i>STUDY DESK</div><h1>刷词练习</h1><p class="book-info"><i data-icon="book-open"></i>大学英语四级<span>·</span>250 个核心词汇</p></div>
+    <div class="mode-switch flex items-center" role="group" aria-label="出题模式">
+      <button data-mode="mix"><i data-icon="shuffle"></i>智能混合</button><button data-mode="en">英译汉</button><button data-mode="zh">汉译英</button>
+    </div>
+  </section>
+  <div class="mobile-pools" aria-label="词库概览"></div>
+  <div class="workspace">
+    <section class="practice" aria-label="当前练习">
+      <article class="word-card" id="card">
+        <div class="card-grid"></div><img class="sculpture" src="assets/folded-loop.webp" alt="">
+        <div class="card-top flex items-center justify-between"><div class="flex items-center card-tags"><span class="direction"><i data-icon="languages"></i><span id="direction">英译汉</span></span><span class="pool-tag"><i></i><span id="origin">新词</span></span></div><span class="card-number" id="cardNo">NO. 001</span></div>
+        <div class="prompt" aria-live="polite"><h2 id="prompt"></h2><div class="pronunciation flex items-center"><span class="pos" id="pos"></span><span id="ipa"></span><button id="speak" aria-label="播放美式发音"><i data-icon="volume"></i></button></div></div>
+        <div class="card-foot"><span class="foot-rule"></span>CET-4 VOCABULARY</div>
+      </article>
+      <div class="answer-heading flex items-center justify-between"><h3><i data-icon="options"></i><span id="instruction">选择正确的中文释义</span></h3><span>单选题</span></div>
+      <div id="choices" class="choices"></div>
+      <div id="feedback" class="feedback" hidden aria-live="polite"></div>
+      <div class="keyboard"><i data-icon="keyboard"></i><span>快捷键</span><kbd>A</kbd><span class="key-dash">–</span><kbd>D</kbd><span>选择答案</span><b></b><kbd>Enter</kbd><span>下一题</span></div>
+    </section>
+    <aside>
+      <section class="panel pools-panel">
+        <div class="panel-title flex items-center justify-between"><h2><i data-icon="layers"></i>词库概览</h2><span class="panel-meta">3 个词库</span></div>
+        <div id="pools"></div>
+        <div class="progress-content"><div class="flex items-center justify-between"><span>掌握进度</span><strong id="percent">0%</strong></div><div class="progress-rail" role="progressbar" aria-label="掌握进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><p>已掌握 <b id="masteredNum">0</b> / 250 词</p></div>
+      </section>
+      <section class="panel today-panel">
+        <div class="panel-title flex items-center justify-between"><h2><i data-icon="activity"></i>今日练习</h2><span id="date" class="panel-meta"></span></div>
+        <div class="daily-stats"><div><strong id="dailyTotal">0</strong><span>已答题数</span></div><div><strong id="accuracy">—</strong><span>正确率</span></div></div>
+      </section>
+    </aside>
+  </div>
+</main>
+<footer class="shell page-footer flex items-center justify-between"><span><i data-icon="brand"></i>词屿 <b>/</b> CET-4</span><span><i data-icon="shield"></i><span id="saveStatus">学习进度保存在本机</span></span></footer>
+<dialog id="modal" aria-labelledby="modalTitle"><div class="dialog-top flex items-center justify-between"><h2 id="modalTitle"></h2><button id="close" class="icon-button" aria-label="关闭弹窗"><i data-icon="x"></i></button></div><div id="modalBody"></div></dialog>
+<input type="file" id="importFile" accept=".json,application/json" hidden>
+<div id="toast" role="status" hidden></div>
+</body>
+</html>
