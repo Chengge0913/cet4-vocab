@@ -11,21 +11,20 @@ function fixture() {
   Q.next(s);
   return {ctx,Q,words,s};
 }
-test('each of 250 words supports four unique same-POS choices and has a sourced bilingual example',()=>{
-  const {Q,words,s} = fixture();
-  assert.equal(words.length,250);
-  assert.equal(new Set(words.map(w=>w.word)).size,250);
+test('each of 800 words supports four unique same-POS choices and has a sourced bilingual example',()=>{
+  const {ctx,Q,words,s} = fixture();
+  ctx.Math.random=()=>.75; // Walk through all new words in order.
+  assert.equal(words.length,800);
+  assert.equal(new Set(words.map(w=>w.word)).size,800);
   for (const word of words) {
     assert.ok(word.ipa && word.en && word.zh && word.source && word.sourceUrl);
     assert.ok(words.filter(w=>w.pos===word.pos && w.group===word.group).length>=4);
-    if (s.question.word!==word.word) { // Select from the remaining new words in sequence.
-      while (s.question.word!==word.word) {Q.grade(s,s.question.word);Q.next(s)}
-    }
+    assert.equal(s.question.word,word.word);
     assert.equal(new Set(s.question.choices.map(k=>Q.byWord.get(k).meaning)).size,4);
     assert.ok(s.question.choices.every(k=>Q.byWord.get(k).pos===word.pos));
     Q.grade(s,word.word);assert.equal(s.records[word.word].pool,'mastered');Q.next(s);
   }
-  assert.equal(Object.keys(s.records).length,250);
+  assert.equal(Object.keys(s.records).length,800);
 });
 test('ordinary draws use exactly the 15/35/50 thresholds',()=>{
   const {ctx,Q,words,s} = fixture();
@@ -71,4 +70,94 @@ test('malformed backup is rejected and all static dependencies are precached',()
   const sw=fs.readFileSync(path.join(root,'service-worker.js'),'utf8');
   const files=fs.readdirSync(root,{recursive:true,withFileTypes:true}).filter(e=>e.isFile()&&e.name!=='service-worker.js');
   for(const e of files){const relative=path.relative(root,path.join(e.parentPath||e.path,e.name));assert.ok(sw.includes("'./"+relative+"'"),relative)}
+});
+
+test('switching mode replaces the word and choices without grading the abandoned question',()=>{
+  const {Q,s}=fixture();
+  for(const mode of ['zh','en','mix','zh','mix']){
+    const previous=s.question;
+    assert.ok(Q.switchMode(s,mode));
+    assert.notEqual(s.question.word,previous.word);
+    assert.notEqual(s.question.choices,previous.choices);
+    assert.equal(s.question.answer,null);
+    if(mode!=='mix') assert.equal(s.question.direction,mode);
+    assert.equal(s.total,0);
+    assert.equal(Object.keys(s.records).length,0);
+    assert.ok(Q.valid(s));
+  }
+  const last=s.question;
+  assert.equal(Q.switchMode(s,s.mode),false);
+  assert.equal(s.question,last);
+});
+
+test('mode switches after grading preserve the grade and consume only an already displayed reservation',()=>{
+  const {ctx,Q,s}=fixture();
+  ctx.Math.random=()=>0; // Reserve the third subsequent question.
+  const original=s.question.word;
+  Q.grade(s,s.question.choices.find(w=>w!==original));
+  Q.switchMode(s,'zh');
+  assert.equal(s.total,1);
+  assert.equal(s.records[original].due,4);
+  Q.grade(s,s.question.word);
+  Q.switchMode(s,'en');
+  assert.equal(s.total,2);
+  Q.grade(s,s.question.word);
+  Q.next(s);
+  assert.equal(s.question.word,original);
+  assert.equal(s.question.sequence,4);
+  const run=s.run;
+  Q.switchMode(s,'mix');
+  assert.notEqual(s.question.word,original);
+  assert.equal(s.records[original].pool,'error');
+  assert.equal(s.records[original].streak,0);
+  assert.equal(s.records[original].due,null);
+  assert.equal(s.run,run);
+  assert.equal(s.total,3);
+  assert.ok(Q.valid(s));
+});
+
+test('redraws still work with an exhausted new pool and with only one word in the selected pool',()=>{
+  const {ctx,Q,words,s}=fixture();
+  for(const word of words) s.records[word.word]={pool:'mastered',streak:0,due:null};
+  ctx.Math.random=()=>.2;
+  Q.next(s);
+  const previous=s.question.word;
+  s.records[previous]={pool:'error',streak:1,due:null};
+  Q.switchMode(s,'zh');
+  assert.notEqual(s.question.word,previous);
+  assert.equal(s.question.origin,'mastered');
+  assert.equal(s.records[previous].streak,1);
+});
+
+test('v1 backups retain their current question, settings, streaks and reservations',()=>{
+  const {Q,s}=fixture();
+  Q.grade(s,s.question.choices.find(w=>w!==s.question.word));
+  const saved=JSON.parse(JSON.stringify(s));
+  delete saved.effects;
+  saved.sound=false;
+  const migrated=Q.restore(saved);
+  assert.ok(migrated.effects);
+  assert.deepEqual(JSON.parse(JSON.stringify(migrated)),{...saved,effects:true});
+  assert.equal(Q.restore({...saved,effects:false}).effects,false);
+  assert.equal(Q.restore({...saved,effects:'true'}),null);
+});
+
+test('each word has an indexed offline pronunciation in a shipped, contiguous audio pack',()=>{
+  const {ctx,words}=fixture();
+  vm.runInContext(fs.readFileSync(path.join(root,'audio-index.js'),'utf8'),ctx);
+  const index=ctx.window.AUDIO_INDEX;
+  assert.equal(Object.keys(index).length,words.length);
+  const ends=new Map();
+  for(const {word} of words){
+    const [offset,duration,part=0]=index[word];
+    assert.ok(Number.isInteger(part) && part>=0 && part<=11);
+    assert.ok(Math.abs((ends.get(part)||0)-offset)<.0001);
+    assert.ok(Number.isFinite(duration) && duration>0);
+    ends.set(part,offset+duration);
+  }
+  assert.equal(ends.size,12);
+  for(const part of ends.keys()){
+    const suffix=part?'-'+String(part).padStart(2,'0'):'';
+    assert.ok(fs.statSync(path.join(root,'assets','pronunciation'+suffix+'.mp3')).size>0);
+  }
 });

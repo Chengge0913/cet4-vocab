@@ -18,7 +18,7 @@
     return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-');
   }
   function fresh() {
-    return {version: 1, mode: 'mix', sound: true, total: 0, correct: 0, run: 0,
+    return {version: 1, mode: 'mix', sound: true, effects: true, total: 0, correct: 0, run: 0,
       daily: {date: dateKey(), total: 0, correct: 0}, records: {}, question: null};
   }
   function pool(state, word) {
@@ -41,14 +41,14 @@
     }
     return shuffle(chosen);
   }
-  function next(s) {
+  function next(s, excludedWord = null) {
     const sequence = s.total + 1;
     const due = words.find(w => s.records[w.word]?.due === sequence);
     let target = due;
     if (!target) {
       const available = Object.fromEntries(banks.map(key => [key, []]));
       for (const w of words) {
-        if (!s.records[w.word]?.due) available[pool(s, w.word)].push(w);
+        if (w.word !== excludedWord && !s.records[w.word]?.due) available[pool(s, w.word)].push(w);
       }
       const p = Math.random();
       let key = p < .15 ? 'mastered' : p < .50 ? 'error' : 'new';
@@ -58,10 +58,20 @@
         else key = available.error.length ? 'error' : 'mastered';
       }
       const list = available[key];
-      target = key === 'new' ? list[0] : pick(list);
+      target = key === 'new' && !excludedWord ? list[0] : pick(list);
     }
-    s.question = {word: target.word, direction: direction(s.mode, s.total === 0),
+    s.question = {word: target.word, direction: direction(s.mode, !s.question && s.total === 0),
       origin: pool(s, target.word), sequence, choices: options(target), answer: null};
+  }
+  function switchMode(s, mode) {
+    if (s.mode === mode || !modes.includes(mode)) return false;
+    const previous = s.question;
+    const record = s.records[previous.word];
+    // This reserved review has already appeared. Skipping it earns no streak.
+    if (previous.answer === null && record?.due === previous.sequence) record.due = null;
+    s.mode = mode;
+    next(s, previous.word);
+    return true;
   }
   function grade(s, answer) {
     const q = s.question;
@@ -88,6 +98,7 @@
   function valid(s) {
     const count = n => Number.isSafeInteger(n) && n >= 0 && n <= Number.MAX_SAFE_INTEGER - 10;
     if (!s || s.version !== 1 || !modes.includes(s.mode) || typeof s.sound !== 'boolean'
+      || (s.effects !== undefined && typeof s.effects !== 'boolean')
       || !count(s.total) || !count(s.correct) || s.correct > s.total || !count(s.run) || s.run > s.correct
       || !s.daily || !/^\d{4}-\d{2}-\d{2}$/.test(s.daily.date) || !count(s.daily.total)
       || s.daily.total > s.total || !count(s.daily.correct) || s.daily.correct > s.daily.total || s.daily.correct > s.correct
@@ -111,5 +122,8 @@
       || (slots.has(q.sequence) && s.records[q.word]?.due !== q.sequence))) return false;
     return true;
   }
-  window.Quiz = {banks, byWord, dateKey, direction, fresh, grade, next, pool, valid};
+  function restore(s) {
+    return valid(s) ? { ...s, effects: s.effects ?? true } : null;
+  }
+  window.Quiz = {banks, byWord, dateKey, direction, fresh, grade, next, pool, valid, restore, switchMode};
 })();

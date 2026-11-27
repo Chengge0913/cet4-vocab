@@ -27,14 +27,15 @@
     mastered: ['已掌握','Mastered Pool','mastered','已掌握','掌握抽查']
   };
   const words = window.WORDS, Q = window.Quiz, key = 'ciyu.cet4.v1';
+  document.querySelectorAll('[data-word-count]').forEach(el => {el.textContent = words.length});
   let lastStored, state, advanceTimer, toastTimer, modalView = '', importState;
   let storageWritable = true;
   function read() {
     try {
       lastStored = localStorage.getItem(key);
       if (lastStored) {
-        const s = JSON.parse(lastStored);
-        if (Q.valid(s)) return s;
+        const s = Q.restore(JSON.parse(lastStored));
+        if (s) return s;
         throw new Error('Invalid progress');
       }
     } catch { message('本机记录读取失败，已打开新的练习。'); }
@@ -58,7 +59,7 @@
     return false;
   }
   const synth = window.speechSynthesis;
-  let voiceList = [], unlocked = false, audioContext, bufferTask, playing, voiceToken = 0, voiceTimer, utterance;
+  let voiceList = [], unlocked = false, audioContext, bufferTask, bufferPart, playing, voiceToken = 0, voiceTimer, utterance;
   function updateVoices() { try {voiceList = synth?.getVoices() || []} catch {voiceList = []} }
   updateVoices(); synth?.addEventListener?.('voiceschanged', updateVoices);
   function stopVoice() {
@@ -67,21 +68,28 @@
     if (synth) synth.cancel();
     utterance = null;
   }
-  function audioBuffer() {
+  function audioBuffer(part) {
     if (!audioContext) return Promise.reject(new Error('Audio unavailable'));
-    if (!bufferTask) bufferTask = fetch('assets/pronunciation.mp3').then(r => {
+    if (bufferTask && part === bufferPart) return bufferTask;
+    bufferPart = part;
+    const suffix = part ? '-' + String(part).padStart(2, '0') : '';
+    const task = fetch('assets/pronunciation' + suffix + '.mp3').then(r => {
       if (!r.ok) throw new Error('Audio not cached');
       return r.arrayBuffer();
-    }).then(b => audioContext.decodeAudioData(b)).catch(e => {bufferTask = null; throw e});
-    return bufferTask;
+    }).then(b => audioContext.decodeAudioData(b)).catch(e => {
+      if (bufferTask === task) bufferTask = null;
+      throw e;
+    });
+    bufferTask = task;
+    return task;
   }
   async function offlineVoice(word, token) {
     try {
-      const buffer = await audioBuffer();
+      const [start, duration, part = 0] = window.AUDIO_INDEX[word];
+      const buffer = await audioBuffer(part);
       if (voiceToken !== token) return;
       await audioContext.resume();
       if (voiceToken !== token) return;
-      const [start, duration] = window.AUDIO_INDEX[word];
       playing = audioContext.createBufferSource();
       playing.buffer = buffer; playing.connect(audioContext.destination); playing.start(0,start,duration);
     } catch { if (voiceToken === token) message('发音暂不可用，请再次点按发音按钮。') }
@@ -106,11 +114,22 @@
     } catch {fallback()}
   }
   function unlock(event) {
-    if (unlocked || !event.isTrusted) return;
-    unlocked = true;
+    if (!event.isTrusted) return;
     try {
       const Audio = window.AudioContext || window.webkitAudioContext;
-      if (Audio) {audioContext = new Audio(); audioContext.resume().catch(() => {}); audioBuffer().catch(() => {})}
+      if (!audioContext && Audio) {
+        audioContext = new Audio();
+        const silent = audioContext.createBufferSource();
+        silent.buffer = audioContext.createBuffer(1, 1, audioContext.sampleRate);
+        silent.connect(audioContext.destination);
+        silent.onended = () => silent.disconnect();
+        silent.start();
+      }
+      if (audioContext && audioContext.state !== 'running') audioContext.resume().catch(() => {});
+    } catch { /* Retry on a later user gesture if Web Audio was interrupted. */ }
+    if (unlocked) return;
+    unlocked = true;
+    try {
       if (synth && window.SpeechSynthesisUtterance) {
         synth.resume(); const warmup = new SpeechSynthesisUtterance(' ');
         warmup.lang = 'en-US'; warmup.volume = 0; synth.speak(warmup); updateVoices();
@@ -121,6 +140,31 @@
   }
   document.addEventListener('click', unlock, true);
   document.addEventListener('keydown', e => {if (['enter',' ','a','b','c','d','1','2','3','4'].includes(e.key.toLowerCase())) unlock(e)}, true);
+  function playFeedback(correct) {
+    if (!state.effects || !audioContext) return;
+    const now = audioContext.currentTime;
+    function tone(frequency, delay, duration, level, type) {
+      const start = now + delay;
+      const oscillator = audioContext.createOscillator();
+      const envelope = audioContext.createGain();
+      oscillator.type = type;
+      oscillator.frequency.setValueAtTime(frequency, start);
+      envelope.gain.setValueAtTime(0, start);
+      envelope.gain.linearRampToValueAtTime(level, start + .012);
+      envelope.gain.exponentialRampToValueAtTime(.0001, start + duration);
+      oscillator.connect(envelope);
+      envelope.connect(audioContext.destination);
+      oscillator.onended = () => { oscillator.disconnect(); envelope.disconnect() };
+      oscillator.start(start);
+      oscillator.stop(start + duration);
+    }
+    if (correct) {
+      tone(659.25, 0, .12, .10, 'sine');
+      tone(987.77, .095, .19, .085, 'sine');
+    } else {
+      tone(146.83, 0, .19, .075, 'triangle');
+    }
+  }
   function speakPrompt() {
     if (state.sound && state.question.direction === 'en' && state.question.answer === null) say(state.question.word);
   }
@@ -181,6 +225,7 @@
     if (reconcile()) {draw();return}
     if (state.question.answer !== null) return;
     Q.grade(state,name); save(); draw();
+    playFeedback(name === state.question.word);
     if (name === state.question.word && state.question.direction === 'zh' && state.sound) say(name);
     if (name !== state.question.word && matchMedia('(max-width: 700px)').matches) {
       requestAnimationFrame(() => $('#feedback').scrollIntoView({block:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'}));
@@ -189,9 +234,10 @@
   $('#choices').onclick = e => {const b=e.target.closest('[data-choice]');if (b) answer(b.dataset.choice)};
   $('.mode-switch').onclick = e => {
     const b=e.target.closest('[data-mode]'); if (!b) return;
-    reconcile(); state.mode = b.dataset.mode;
-    if (state.question.answer === null) state.question.direction = Q.direction(state.mode);
-    stopVoice(); save(); draw(); speakPrompt();
+    const changedElsewhere = reconcile();
+    if (Q.switchMode(state, b.dataset.mode)) {
+      stopVoice(); save(); draw(true); speakPrompt();
+    } else if (changedElsewhere) draw();
   };
   $('#speak').onclick = () => say(state.question.word);
   const dialog = $('#modal'), body = $('#modalBody');
@@ -221,10 +267,14 @@
   const row = (id,ico,label,end='',extra='')=>'<button id="'+id+'" class="setting-row '+extra+'"><i>'+icon(ico)+'</i>'+label+'<span>'+end+'</span></button>';
   function settings() {
     openModal('练习设置','settings');
-    body.innerHTML = row('audioToggle','volume','自动美音朗读','<i class="toggle '+(state.sound?'on':'')+'" style="display:block"></i>')
+    const toggle = enabled => '<i class="toggle '+(enabled?'on':'')+'" style="display:block"></i>';
+    body.innerHTML = row('audioToggle','volume','自动美音朗读',toggle(state.sound))
+      +row('effectsToggle','activity','答题音效',toggle(state.effects))
       +row('export','download','导出学习进度')+row('import','upload','导入 JSON 备份')+row('reset','repeat','重置学习进度','','destructive');
     $('#audioToggle').setAttribute('role','switch');$('#audioToggle').setAttribute('aria-checked',state.sound);
     $('#audioToggle').onclick=()=>{state.sound=!state.sound;save();if (!state.sound) stopVoice();else speakPrompt();settings();$('#audioToggle').focus()};
+    $('#effectsToggle').setAttribute('role','switch');$('#effectsToggle').setAttribute('aria-checked',state.effects);
+    $('#effectsToggle').onclick=()=>{state.effects=!state.effects;save();settings();$('#effectsToggle').focus()};
     $('#export').onclick=()=>{
       const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
       const url=URL.createObjectURL(blob), a=document.createElement('a');a.href=url;a.download='词屿-CET4-'+Q.dateKey()+'.json';
@@ -235,7 +285,7 @@
   }
   function confirmAction(isImport) {
     openModal(isImport?'恢复学习备份？':'重置学习进度？',isImport?'import':'reset');
-    const text = isImport?'将恢复备份中的 '+importState.total+' 次答题记录，并替换本机当前进度。':'250 个词将回到未学词库，答题记录和错题连胜将清零。';
+    const text = isImport?'将恢复备份中的 '+importState.total+' 次答题记录，并替换本机当前进度。':words.length+' 个词将回到未学词库，答题记录和错题连胜将清零。';
     body.innerHTML='<p class="dialog-help"></p><div class="confirm-actions"><button id="cancelAction" class="secondary">取消</button><button id="confirmAction" class="'+(isImport?'primary':'danger')+'">'+(isImport?'恢复备份':'确认重置')+'</button></div>';
     body.querySelector('p').textContent=text;$('#cancelAction').onclick=settings;
     $('#confirmAction').onclick=()=>{
@@ -248,7 +298,7 @@
     const file=e.target.files[0];e.target.value='';if (!file) return;
     try {
       if (file.size>1000000) throw new Error();
-      const data=JSON.parse(await file.text());if (!Q.valid(data)) throw new Error();
+      const data=Q.restore(JSON.parse(await file.text()));if (!data) throw new Error();
       importState=data;confirmAction(true);
     } catch {
       openModal('备份文件无效','invalid');
